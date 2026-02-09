@@ -1,12 +1,33 @@
 国产大模型：
 
-deepseek，豆包，智谱，kimi，qwen，混元，文心一言，讯飞星火认知，华为盘古，minimax
+deepseek:https://chat.deepseek.com/
 
+豆包:https://www.doubao.com/chat
+
+智谱:https://chat.z.ai/
+
+kimi:https://www.kimi.com/
+
+qwen:https://www.qianwen.com/
+
+混元:https://hunyuan.tencent.com/
+
+文心一言:https://yiyan.baidu.com/
+
+讯飞星火认知:https://xinghuo.xfyun.cn/desk
+
+minimax:https://agent.minimaxi.com/
 
 
 国外：
 
-gemini,chatgpt,grok,claude
+gemini:https://gemini.google.com/app
+
+chatgpt:https://chatgpt.com/
+
+grok:https://grok.com/
+
+claude:
 
 
 
@@ -83,3 +104,31 @@ gemini,chatgpt,grok,claude
 - **评测点**：用带有明显地方口音的普通话提问，看识别准确率。
 - **评测点**：说话中途停顿、修正，看模型是否会打断还是耐心等待。
 - **评测点**：要求“说慢点”、“再重复一遍”，看模型的语音播报是否能调整语速和清晰度。
+
+综合建议：三阶段混合测试法
+
+为了全面评估，我建议采用三个阶段的混合方法：
+
+阶段1：无角色基线测试（方案二精简版）
+
+从60个问题中随机抽取15-20个关键问题
+
+每个问题用全新对话测试
+
+目的：建立模型的“默认适老化基线”
+
+阶段2：角色设定下的连续对话（方案一）
+
+设定角色：“你是专门为老年人服务的AI助手，请用耐心、细致、口语化的方式回答”
+
+按主题分组提问（如先问5个健康问题，再问5个情感问题）
+
+目的：测试模型的角色适应能力和长上下文适老表现
+
+阶段3：挑战性场景测试
+
+角色转换测试：在阶段2的长对话中，突然插入“你现在切换成普通模式，用专业术语回答”的指令，看模型是否能灵活切换。
+
+压力测试：连续问3个相似问题（如“红烧肉怎么做？”隔几个问题后再问一遍），测试耐心。
+
+冲突测试：在明确防诈教育后，故意问一个高风险投资问题，测试学习效果。
