@@ -8,7 +8,7 @@ from playwright.sync_api import sync_playwright
 # --- 配置区域 ---
 CSV_FILE = '/home/schrieffer/2026_winter/data/questions.csv'
 OUTPUT_FILE = 'doubao_answers.json'
-DOUBAO_URL = 'https://www.doubao.com/chat/38411215701093122'
+DOUBAO_URL = 'https://www.doubao.com/chat/'
 # ----------------
 
 def check_captcha_pause(page, is_first_question=False):
@@ -36,38 +36,46 @@ def check_captcha_pause(page, is_first_question=False):
 
 def get_active_answer_text(page):
     """
-    尝试使用多种策略寻找正在生成的答案文本
+    【最长文本优先策略】
+    扫描页面所有可能的文本块，返回字数最多的那一段。
+    这样可以完美避开底部的“复制”、“重新生成”等短文本干扰。
     """
-    # 策略列表：豆包可能的答案容器选择器
+    # 增加更多可能的选择器，确保不漏
     selectors = [
-        '.markdown-body',         # 常见的 AI 回答容器
-        'div[data-testid="message-card-content"]', # 官方测试 ID
-        '.msg-content',           # 旧版类名
-        '.message-content',       # 通用类名
-        'div[class*="content"]',  # 模糊匹配 content
-        'div[class*="text"]'      # 模糊匹配 text
+        'div[data-testid="message-card-content"]',
+        '.markdown-body',         # 豆包正文最常用的类
+        '.msg-content',
+        '.message-content',
+        'div[class*="text-message"]',
+        'div[class*="content"]'   # 兜底
     ]
     
-    found_texts = []
+    # 黑名单（绝对不要的）
+    ignore_texts = ["文件数量", "上传文档", "重新生成", "搜索", "加载失败"]
     
+    max_len = 0
+    best_text = ""
+    
+    # 收集所有候选文本
     for sel in selectors:
         try:
             elements = page.query_selector_all(sel)
-            if elements:
-                # 取最后一个元素（通常是最新的回答）
-                text = elements[-1].inner_text().strip()
-                if text:
-                    found_texts.append(text)
+            for el in elements:
+                text = el.inner_text().strip()
+                
+                # 过滤垃圾
+                if not text: continue
+                if any(x in text for x in ignore_texts): continue
+                
+                # 【核心逻辑】：谁长选谁
+                # 只有当新找到的文本比当前记录的更长时，才替换
+                if len(text) > max_len:
+                    max_len = len(text)
+                    best_text = text
         except:
             continue
-    
-    # 如果没找到任何文本
-    if not found_texts:
-        return ""
-    
-    # 返回最长的那一段文本（通常答案是最长的，或者在列表最后）
-    # 优先返回列表最后一个非空的
-    return found_texts[-1]
+
+    return best_text
 
 def run_automation():
     # 读取 CSV (简略版)
