@@ -6,22 +6,75 @@ import os
 from playwright.sync_api import sync_playwright
 
 # --- 配置区域 ---
-CSV_FILE = '/home/schrieffer/2026_winter/data/questions.csv'  # 确保文件名和下载的一致
+CSV_FILE = '/home/schrieffer/2026_winter/data/questions.csv'
 OUTPUT_FILE = 'doubao_answers.json'
-DOUBAO_URL = 'https://www.doubao.com/chat/'
+DOUBAO_URL = 'https://www.doubao.com/chat/38411215701093122'
 # ----------------
 
+def check_captcha_pause(page, is_first_question=False):
+    """
+    遇到验证码暂停，等待用户手动解决。
+    """
+    has_captcha = False
+    try:
+        # 检测常见的验证码关键词
+        if page.get_by_text("安全验证").is_visible() or \
+           page.get_by_text("拖动滑块").is_visible() or \
+           page.locator('.captcha-verify-container').count() > 0:
+            has_captcha = True
+    except: pass
+
+    if is_first_question or has_captcha:
+        print("\n" + "!"*50)
+        print("【等待人工介入】")
+        print("1. 请查看浏览器，是否有验证码？")
+        print("2. 如果有，请手动完成拖拽。")
+        print("3. 等待【答案开始生成】（看到字在动了）。")
+        print("!"*50)
+        input(">>> 确认已过验证且答案正在生成？按 [Enter] 继续抓取...")
+        print(">>> 恢复运行...")
+
+def get_active_answer_text(page):
+    """
+    尝试使用多种策略寻找正在生成的答案文本
+    """
+    # 策略列表：豆包可能的答案容器选择器
+    selectors = [
+        '.markdown-body',         # 常见的 AI 回答容器
+        'div[data-testid="message-card-content"]', # 官方测试 ID
+        '.msg-content',           # 旧版类名
+        '.message-content',       # 通用类名
+        'div[class*="content"]',  # 模糊匹配 content
+        'div[class*="text"]'      # 模糊匹配 text
+    ]
+    
+    found_texts = []
+    
+    for sel in selectors:
+        try:
+            elements = page.query_selector_all(sel)
+            if elements:
+                # 取最后一个元素（通常是最新的回答）
+                text = elements[-1].inner_text().strip()
+                if text:
+                    found_texts.append(text)
+        except:
+            continue
+    
+    # 如果没找到任何文本
+    if not found_texts:
+        return ""
+    
+    # 返回最长的那一段文本（通常答案是最长的，或者在列表最后）
+    # 优先返回列表最后一个非空的
+    return found_texts[-1]
+
 def run_automation():
-    # 1. 读取 CSV
+    # 读取 CSV (简略版)
     try:
         df = pd.read_csv(CSV_FILE)
-        # 自动识别那一列是问题
-        target_col = None
-        for col in df.columns:
-            if 'question' in col.lower() or '问题' in col:
-                target_col = col
-                break
-        if not target_col: target_col = df.columns[0] # 没找到就用第一列
+        # 寻找问题列
+        target_col = next((c for c in df.columns if 'question' in c.lower() or '问题' in c), df.columns[0])
         questions = df[target_col].tolist()
         print(f"成功加载 {len(questions)} 个问题。")
     except Exception as e:
@@ -29,148 +82,115 @@ def run_automation():
         return
 
     with sync_playwright() as p:
-        # 启动浏览器
-        print(">>> 正在启动浏览器...")
-        browser = p.chromium.launch(headless=False, args=['--start-maximized']) # 有头模式
+        browser = p.chromium.launch(headless=False, args=['--start-maximized'])
         context = browser.new_context(viewport={'width': 1920, 'height': 1080})
         page = context.new_page()
 
-        # 打开页面
         page.goto(DOUBAO_URL)
-        
-        print("\n" + "="*60)
-        print("【重要提示】")
-        print("1. 请现在手动在浏览器中扫码或登录。")
-        print("2. 登录成功，看到对话界面后，请不要操作，也不要关闭浏览器！")
-        print("3. 回到这里，按 'Enter' (回车键) 开始脚本。")
-        print("="*60 + "\n")
-        input(">>> 登录完成后，请按回车键继续...")
+        print("\n=== 请登录 ===")
+        input(">>> 登录成功并进入聊天界面后，按 [Enter] 开始脚本...")
 
-        # 2. 智能定位输入框 (核心修改)
-        # 豆包的输入框通常是一个富文本框 div
-        print(">>> 正在寻找输入框...")
+        # 定位输入框
+        input_selector = 'div[contenteditable="true"]'
         
-        input_selector = 'div[contenteditable="true"]' # 方案A: 富文本框
-        textarea_selector = 'textarea'                 # 方案B: 纯文本框
-        
-        try:
-            # 等待输入框出现，最多等 30秒
-            # 优先找 contenteditable，如果找不到找 textarea
-            page.wait_for_selector(f'{input_selector}, {textarea_selector}', timeout=30000)
-            
-            # 判断到底存在的是哪一个
-            if page.is_visible(input_selector):
-                final_selector = input_selector
-            else:
-                final_selector = textarea_selector
-                
-            print(f">>> 找到输入框，使用选择器: {final_selector}")
-            
-            # 点击一下聚焦，确保页面是活的
-            page.click(final_selector)
-            
-        except Exception as e:
-            print(f"!!! 致命错误: 找不到输入框。请确认您已登录并进入了聊天界面。")
-            print(f"错误信息: {e}")
-            return
-
-        # 3. 开始循环提问
+        # 循环提问
         for index, q in enumerate(questions):
-            if not str(q).strip(): continue # 跳过空行
+            q = str(q).strip()
+            if not q: continue
             
-            print(f"\n[{index+1}/{len(questions)}] 正在提问: {q[:10]}...")
-            
+            print(f"\n[{index+1}/{len(questions)}] 提问: {q[:10]}...")
+
             try:
-                # A. 清空并输入问题
-                page.click(final_selector)
-                # 全选删除旧内容（防止上次没发出去）
-                page.keyboard.press('Control+A') 
+                # 1. 寻找并聚焦输入框
+                try:
+                    page.wait_for_selector(input_selector, timeout=5000)
+                    page.click(input_selector)
+                except:
+                    # 备选方案：尝试找 textarea
+                    page.click('textarea')
+                
+                # 2. 输入并发送
+                page.keyboard.press('Control+A')
                 page.keyboard.press('Backspace')
-                
-                # 模拟打字
-                page.keyboard.type(str(q), delay=50) 
                 time.sleep(0.5)
-                
-                # B. 发送
+                page.keyboard.type(q, delay=30)
+                time.sleep(0.5)
                 page.keyboard.press('Enter')
                 
-                # C. 等待回答生成
-                print(">>> 等待回答...")
+                # 3. 暂停检测验证码
+                time.sleep(2)
+                check_captcha_pause(page, is_first_question=(index == 0))
+
+                # 4. 监听答案生成 (Debug 模式)
+                print(">>> 开始监听答案...")
                 last_text = ""
                 stable_start_time = time.time()
-                time.sleep(2) # 给它一点反应时间
+                wait_timeout = time.time()
+                
+                debug_counter = 0
 
                 while True:
-                    try:
-                        # 获取所有消息气泡
-                        # 这是一个通用策略：找所有包含大量文字的 div，取最后一个
-                        # 豆包的消息气泡通常包含特定结构，但 class 经常变
-                        # 我们尝试抓取 conversation container 里的最后一条
-                        
-                        # 尝试定位所有气泡
-                        msgs = page.query_selector_all('div[data-testid="message-card-content"]')
-                        # 如果上面的找不到，尝试找所有 text-base 类的 div
-                        if not msgs:
-                            msgs = page.query_selector_all('.msg-content')
-                        
-                        if not msgs:
-                            time.sleep(1)
-                            continue
+                    # 尝试获取当前文本
+                    current_text = get_active_answer_text(page)
+                    
+                    # --- DEBUG 输出 (每10次循环输出一次，避免刷屏) ---
+                    if debug_counter % 5 == 0:
+                        preview = current_text[:20].replace('\n', ' ') if current_text else "未找到文本"
+                        print(f"\r[监控中] 当前抓取长度: {len(current_text)} | 内容预览: {preview}...", end="")
+                    debug_counter += 1
+                    # -----------------------------------------------
 
-                        current_text = msgs[-1].inner_text()
-                    except:
-                        current_text = last_text
-
-                    # 检查是否还在生成 (字数在增加)
-                    if current_text != last_text and len(current_text) > len(last_text):
+                    # 逻辑 A: 字数在增加 -> 正在生成
+                    if len(current_text) > len(last_text):
                         last_text = current_text
-                        stable_start_time = time.time()
-                        print(f"\r>>> 生成中... {len(current_text)} 字", end="")
+                        stable_start_time = time.time() # 重置稳定计时器
+                        wait_timeout = time.time()      # 重置超时计时器
+                    
+                    # 逻辑 B: 字数不变 -> 可能完成，也可能卡住
                     else:
-                        # 如果由内容且 4秒内字数没变，认为结束
-                        if time.time() - stable_start_time > 4 and len(current_text) > 2:
-                            print(f"\n>>> 回答获取完成！")
+                        # 如果有内容，且超过 4 秒没变 -> 认为完成
+                        if len(current_text) > 5 and (time.time() - stable_start_time > 4):
+                            print(f"\n>>> 判定回答完成！(长度: {len(current_text)})")
+                            break
+                        
+                        # 如果内容一直是空的，或者一直是用户的问题(长度短)，等待
+                        pass
+
+                    # 逻辑 C: 超时保护 (比如 30秒 长度都没变过，或者一直抓不到)
+                    if time.time() - wait_timeout > 60:
+                        print("\n>>> [超时] 长时间未检测到有效生成。")
+                        # 可能是脚本抓错元素了，或者验证码卡住了
+                        check_captcha_pause(page)
+                        wait_timeout = time.time() # 再给一次机会
+                        # 如果确认没问题，就跳过
+                        if input(">>> 跳过此题吗？(y/n): ").lower() == 'y':
                             break
                     
-                    # 超时保护 (120秒)
-                    if time.time() - stable_start_time > 120:
-                        print("\n>>> 等待超时，跳过此题。")
-                        break
-                        
-                    time.sleep(1)
+                    time.sleep(0.8)
 
-                # D. 存盘
+                # 5. 存盘
                 entry = {"id": index+1, "question": q, "answer": last_text}
                 
-                # 读取旧数据追加
-                data_list = []
+                existing_data = []
                 if os.path.exists(OUTPUT_FILE):
                     try:
                         with open(OUTPUT_FILE, 'r', encoding='utf-8') as f:
-                            data_list = json.load(f)
+                            existing_data = json.load(f)
                     except: pass
                 
-                data_list.append(entry)
+                existing_data.append(entry)
                 with open(OUTPUT_FILE, 'w', encoding='utf-8') as f:
-                    json.dump(data_list, f, ensure_ascii=False, indent=2)
+                    json.dump(existing_data, f, ensure_ascii=False, indent=2)
 
-                # E. 休息
-                sleep_time = random.randint(15, 25)
-                print(f">>> 模拟阅读，休息 {sleep_time} 秒...")
-                time.sleep(sleep_time)
+                # 休息
+                print(f">>> 成功保存。休息中...")
+                time.sleep(random.randint(5, 10))
 
             except Exception as e:
-                print(f"处理出错: {e}")
-                # 尝试刷新页面恢复环境
-                try:
-                    page.reload()
-                    page.wait_for_selector(final_selector, timeout=10000)
-                except:
-                    pass
-                continue
+                print(f"!!! 异常: {e}")
+                input(">>> 按回车重试...")
 
-        print("\n全部完成！")
-        # 此时再关闭浏览器
+        print("全部完成")
         browser.close()
 
 if __name__ == "__main__":
