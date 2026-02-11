@@ -36,46 +36,67 @@ def check_captcha_pause(page, is_first_question=False):
 
 def get_active_answer_text(page):
     """
-    【最长文本优先策略】
-    扫描页面所有可能的文本块，返回字数最多的那一段。
-    这样可以完美避开底部的“复制”、“重新生成”等短文本干扰。
+    【修复版】尝试使用多种策略寻找答案，并过滤掉无效的界面文本（如上传提示）。
     """
-    # 增加更多可能的选择器，确保不漏
+    # 1. 定义黑名单：这些文字绝对不是答案，如果你抓到了，就丢掉
+    ignore_texts = [
+        "文件数量：最多", 
+        "文件类型：", 
+        "已阅读并同意", 
+        "加载失败", 
+        "重试",
+        "搜索",
+        "上传文档"
+    ]
+
+    # 2. 策略列表：豆包可能的答案容器选择器 (按优先级排序)
+    # 我们加入更具体的类名和属性
     selectors = [
-        'div[data-testid="message-card-content"]',
-        '.markdown-body',         # 豆包正文最常用的类
-        '.msg-content',
-        '.message-content',
-        'div[class*="text-message"]',
-        'div[class*="content"]'   # 兜底
+        'div[data-testid="message-card-content"]',  # 官方测试ID，最准
+        '.markdown-body',         # 正文内容
+        '.msg-content',           # 旧版
+        'div[class*="content"]',  # 包含 content 的 div
+        'div[class*="text"]',     # 包含 text 的 div
+        'div[class*="message"]'   # 包含 message 的 div
     ]
     
-    # 黑名单（绝对不要的）
-    ignore_texts = ["文件数量", "上传文档", "重新生成", "搜索", "加载失败"]
+    candidates = []
     
-    max_len = 0
-    best_text = ""
-    
-    # 收集所有候选文本
+    # 遍历所有可能的选择器
     for sel in selectors:
         try:
             elements = page.query_selector_all(sel)
             for el in elements:
                 text = el.inner_text().strip()
                 
-                # 过滤垃圾
+                # --- 核心过滤逻辑 ---
+                # 1. 如果是空，跳过
                 if not text: continue
-                if any(x in text for x in ignore_texts): continue
+                # 2. 如果包含黑名单里的字，跳过 (比如抓到了上传提示)
+                if any(bad_word in text for bad_word in ignore_texts):
+                    continue
+                # 3. 如果太短（小于2个字），大概率是图标或按钮，跳过
+                if len(text) < 2: continue
+                # ------------------
                 
-                # 【核心逻辑】：谁长选谁
-                # 只有当新找到的文本比当前记录的更长时，才替换
-                if len(text) > max_len:
-                    max_len = len(text)
-                    best_text = text
+                candidates.append(text)
         except:
             continue
-
-    return best_text
+    
+    # 如果过滤完，啥都没了
+    if not candidates:
+        return ""
+    
+    # 【智能判定】
+    # 真正的答案通常是字数比较多，且位于列表靠后的位置
+    # 我们倒序检查，返回第一个字数超过 5 的文本
+    # 这样可以避开页面底部的简短提示
+    for text in reversed(candidates):
+        if len(text) > 5:
+            return text
+            
+    # 如果都不满足，就返回最后一个非空的
+    return candidates[-1]
 
 def run_automation():
     # 读取 CSV (简略版)
