@@ -36,7 +36,7 @@ def check_captcha_pause(page, is_first_question=False):
 
 def get_active_answer_text(page):
     """
-    【修复版】尝试使用多种策略寻找答案，并过滤掉无效的界面文本（如上传提示）。
+    尝试使用多种策略寻找答案，并过滤掉无效的界面文本（如上传提示）。
     """
     # 1. 定义黑名单：这些文字绝对不是答案，如果你抓到了，就丢掉
     ignore_texts = [
