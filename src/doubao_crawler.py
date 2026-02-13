@@ -38,7 +38,7 @@ def get_active_answer_text(page):
     """
     尝试使用多种策略寻找答案，并过滤掉无效的界面文本（如上传提示）。
     """
-    # 1. 定义黑名单：这些文字绝对不是答案，如果你抓到了，就丢掉
+    # 定义黑名单
     ignore_texts = [
         "文件数量：最多", 
         "文件类型：", 
@@ -49,8 +49,7 @@ def get_active_answer_text(page):
         "上传文档"
     ]
 
-    # 2. 策略列表：豆包可能的答案容器选择器 (按优先级排序)
-    # 我们加入更具体的类名和属性
+    # 策略列表：豆包可能的答案容器选择器 (按优先级排序)
     selectors = [
         'div[data-testid="message-card-content"]',  # 官方测试ID，最准
         '.markdown-body',         # 正文内容
@@ -68,14 +67,13 @@ def get_active_answer_text(page):
             elements = page.query_selector_all(sel)
             for el in elements:
                 text = el.inner_text().strip()
-                
-                # --- 核心过滤逻辑 ---
-                # 1. 如果是空，跳过
+
+                # 如果是空，跳过
                 if not text: continue
-                # 2. 如果包含黑名单里的字，跳过 (比如抓到了上传提示)
+                # 如果包含黑名单里的字，跳过 (比如抓到了上传提示)
                 if any(bad_word in text for bad_word in ignore_texts):
                     continue
-                # 3. 如果太短（小于2个字），大概率是图标或按钮，跳过
+                # 如果太短（小于2个字），大概率是图标或按钮，跳过
                 if len(text) < 2: continue
                 # ------------------
                 
@@ -87,7 +85,6 @@ def get_active_answer_text(page):
     if not candidates:
         return ""
     
-    # 【智能判定】
     # 真正的答案通常是字数比较多，且位于列表靠后的位置
     # 我们倒序检查，返回第一个字数超过 5 的文本
     # 这样可以避开页面底部的简短提示
@@ -99,7 +96,7 @@ def get_active_answer_text(page):
     return candidates[-1]
 
 def run_automation():
-    # 读取 CSV (简略版)
+    # 读取 CSV 
     try:
         df = pd.read_csv(CSV_FILE)
         # 寻找问题列
@@ -130,7 +127,7 @@ def run_automation():
             print(f"\n[{index+1}/{len(questions)}] 提问: {q[:10]}...")
 
             try:
-                # 1. 寻找并聚焦输入框
+                # 寻找并聚焦输入框
                 try:
                     page.wait_for_selector(input_selector, timeout=5000)
                     page.click(input_selector)
@@ -138,7 +135,7 @@ def run_automation():
                     # 备选方案：尝试找 textarea
                     page.click('textarea')
                 
-                # 2. 输入并发送
+                # 输入并发送
                 page.keyboard.press('Control+A')
                 page.keyboard.press('Backspace')
                 time.sleep(0.5)
@@ -146,11 +143,11 @@ def run_automation():
                 time.sleep(0.5)
                 page.keyboard.press('Enter')
                 
-                # 3. 暂停检测验证码
+                # 暂停检测验证码
                 time.sleep(2)
                 check_captcha_pause(page, is_first_question=(index == 0))
 
-                # 4. 监听答案生成 (Debug 模式)
+                # 监听答案生成 (Debug 模式)
                 print(">>> 开始监听答案...")
                 last_text = ""
                 stable_start_time = time.time()
@@ -162,20 +159,20 @@ def run_automation():
                     # 尝试获取当前文本
                     current_text = get_active_answer_text(page)
                     
-                    # --- DEBUG 输出 (每10次循环输出一次，避免刷屏) ---
+                    # --- DEBUG 输出 ---
                     if debug_counter % 5 == 0:
                         preview = current_text[:20].replace('\n', ' ') if current_text else "未找到文本"
                         print(f"\r[监控中] 当前抓取长度: {len(current_text)} | 内容预览: {preview}...", end="")
                     debug_counter += 1
                     # -----------------------------------------------
 
-                    # 逻辑 A: 字数在增加 -> 正在生成
+                    # 字数在增加 -> 正在生成
                     if len(current_text) > len(last_text):
                         last_text = current_text
                         stable_start_time = time.time() # 重置稳定计时器
                         wait_timeout = time.time()      # 重置超时计时器
                     
-                    # 逻辑 B: 字数不变 -> 可能完成，也可能卡住
+                    # 字数不变 -> 可能完成，也可能卡住
                     else:
                         # 如果有内容，且超过 4 秒没变 -> 认为完成
                         if len(current_text) > 5 and (time.time() - stable_start_time > 4):
